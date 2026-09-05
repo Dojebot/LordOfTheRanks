@@ -13,8 +13,8 @@ from Functions import *
 ## Set required discord bot environment flags
 intents = discord.Intents.default()
 intents.members = True
-client = discord.Client(intents = intents)
-tree = discord.app_commands.CommandTree(client)
+Discord_Client = discord.Client(intents = intents)
+tree = discord.app_commands.CommandTree(Discord_Client)
 
 #Load environment variables from external file
 dotenv.load_dotenv()
@@ -74,9 +74,9 @@ for Command_File in Directory_Contents:
 		exec(Command_Module_Code, Command_Namespace)
 
 # Display ready message
-@client.event
+@Discord_Client.event
 async def on_ready():
-	print('We have logged in as {0.user}'.format(client))
+	print('We have logged in as {0.user}'.format(Discord_Client))
 
 	#Push command tree to users (not homeland for now)
 	print("Syncing Command Tree")
@@ -89,42 +89,42 @@ async def on_ready():
 		print(f"Sync failed: {e}")
 	#Get guild roles
 	print("Discord : Getting Guild Roles")
-	#Guild_Role_List = await discord_data.Roles_Get(client, guild_id=DISCORD_GUILD)
+	#Guild_Role_List = await discord_data.Roles_Get(Discord_Client, guild_id=DISCORD_GUILD)
 	print("Discord : Updating Guild Roles")
-	#sql_account_discord.Roles_List_Update(SQL_Connection, Guild_Role_List)
-	#discord_data.Roles_Display(Guild_Role_List)
+	#sql_account_discord.Roles_List_Update(SQL_Connection, SQL_Cursor, Guild_Role_List)
 
 	#Get discord guild members
 	print("Discord : Getting Guild Members")
-	#Discord_Guild_Member_List = discord_data.Members_Get(client, guild_id=DISCORD_GUILD);
+	#Discord_Guild_Member_List = discord_data.Members_Get(Discord_Client, guild_id=DISCORD_GUILD);
 	#Update discord guild members in the MySQL Database
 	print("Discord : Updating Guild Members")
-	#sql_account_discord.Members_List_Update(SQL_Connection, Discord_Guild_Member_List)
+	#sql_account_discord.Members_List_Update(SQL_Connection, SQL_Cursor, Discord_Guild_Member_List)
 	
 	#Get osrs guild members
 	print("WOM : Getting Guild Members")
 	#OSRS_Guild_Member_List = await wom_data.Members_Get(WOM_USER, WOM_TOKEN, WOM_GUILD);
 	#Update osrs guild members in the MySQL Database
 	print("WOM : Updating Guild Members and Roles")
-	#wom_data.Members_Display(OSRS_Guild_Member_List)
-	#sql_account_osrs.Members_List_And_Roles_List_Update(SQL_Connection, OSRS_Guild_Member_List)
+	#sql_account_osrs.Members_List_And_Roles_List_Update(SQL_Connection, SQL_Cursor, OSRS_Guild_Member_List)
 
 	print("BOT : Attempting to match users")
-	#discord_members = sql_account_discord.Members_Get(SQL_Connection)
-	#discord_ids = [result["discord_id"] for result in discord_members]
-	#osrs_members = sql_account_osrs.Members_Get(SQL_Connection)
-	#player_ids = [result["player_id"] for result in osrs_members]
+	discord_members = sql_account_discord.Members_Get(SQL_Cursor)
+	discord_ids = [result["discord_id"] for result in discord_members]
+	osrs_members = sql_account_osrs.Members_Get(SQL_Cursor)
+	player_ids = [result["player_id"] for result in osrs_members]
+	Link_Data = sql_account_link.Linked_Accounts_Attempt_Matches(SQL_Cursor, discord_members, osrs_members)
+	sql_account_link.Linked_Accounts_Attempt_Match_Display(Link_Data, discord_members, osrs_members)
+	await sql_account_link.Linked_Accounts_Attempt_Match_Strong_Update(SQL_Connection, SQL_Cursor, Link_Data, discord_members, osrs_members)
 	#known_links = sql_account_link.Linked_Accounts_Get(SQL_Cursor, discord_ids, player_ids)
-	#Link_Data = sql_account_link.Linked_Accounts_Attempt_Matches(discord_members, osrs_members, known_links)
-	#sql_account_link.Linked_Accounts_Attempt_Match_Display(Link_Data, discord_members, osrs_members)
+	
 
 	#Rank votes: re-register open votes' buttons, check the rank ladder against
 	#the server's roles, and start watching for votes whose time is up
-	#await poll_setup.On_Ready(client, DISCORD_GUILD)
+	#await poll_setup.On_Ready(Discord_Client, DISCORD_GUILD)
 
 	#Bot ready to perform async actions on demand
 	print("Bot Ready!")
 
 # Connect to discord using the bot's API Token
 print("Connecting bot to discord")
-client.run(DISCORD_TOKEN)
+Discord_Client.run(DISCORD_TOKEN)

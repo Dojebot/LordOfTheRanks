@@ -28,7 +28,7 @@ def SQL_Verify_And_Connect(SQL_Host, SQL_User, SQL_Pass, SQL_Database, SQL_Table
 	#Display mysql connection
 	print(f" SQL : Connecting to MySQL Database : {SQL_Connection}")
 	#Create cursor to move around the database to gather requests
-	SQL_Cursor = SQL_Connection.cursor()
+	SQL_Cursor = SQL_Connection.cursor(buffered=True)
 	#Verify all tables exist
 	try:
 	    Table_Verify(SQL_Cursor, SQL_Table_Definitions_Filepath)
@@ -146,3 +146,14 @@ def Database_Table_JSON_Read(Table_Definitions_Filepath):
 		raise SystemExit(f"SQL : Could not find table definitions file: {Table_Definitions_Filepath}")
 	except json.JSONDecodeError as e:
 		raise SystemExit(f"SQL : Invalid JSON in {Table_Definitions_Filepath}: {e}")
+
+def Query_Dicts_Get(SQL_Cursor, Query: str, Params: tuple = None) -> list[dict]:
+	try:
+		print(f"SQL : Executing Query : {Query}")
+		SQL_Cursor.execute(Query, Params)
+		columns = SQL_Cursor.column_names
+		rows = SQL_Cursor.fetchall()
+		return [dict(zip(columns, row)) for row in rows]
+	except Exception as err:
+		print(f"SQL : Query failed : {err}")
+		return None

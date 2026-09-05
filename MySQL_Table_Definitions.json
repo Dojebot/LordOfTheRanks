@@ -35,15 +35,15 @@
     "link_discord_osrs_members": {
 	   "link_id": "INT PRIMARY KEY AUTO_INCREMENT",
        "discord_id": "BIGINT",
-       "player_id": "INT NOT NULL",
-       "is_main_account": "BOOLEAN NOT NULL DEFAULT FALSE"
+       "player_id": "INT NOT NULL UNIQUE KEY",
+       "is_main_account": "BOOLEAN NOT NULL DEFAULT FALSE",
+       "moderator_locked": "BOOLEAN DEFAULT FALSE"
     },
 
     "link_discord_osrs_roles": {
        "link_id": "INT PRIMARY KEY AUTO_INCREMENT",
        "discord_role_id": "BIGINT DEFAULT 0",
-       "osrs_role_id": "SMALLINT DEFAULT 0",
-       "is_main_account": "BOOLEAN NOT NULL DEFAULT FALSE"
+       "osrs_role_id": "SMALLINT DEFAULT 0"
     },
 
     "competitions": {
