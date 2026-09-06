@@ -163,24 +163,57 @@ def _similarity(a: str, b: str) -> float:
 # Exact (normalized) matches always win outright. Failing that, the closest match by
 # similarity is used provided it clears FUZZY_MATCH_THRESHOLD - a typo like "zezzima"
 # still resolves to "zezima" rather than forcing an exact re-type.
-def Runescape_Name_To_Player_ID(SQL_Cursor, runescape_name: str, Require_Unlinked: bool = True):
+def Runescape_Name_To_Player_ID(SQL_Cursor, runescape_name: str, discord_id: int = None, Require_Unlinked: bool = True, Own_Only: bool = False):
 	"""
+	Resolve an RSN to a player_id by fuzzy-matching current_rsn.
+	Own_Only controls the search scope:
+	  False (default): searches the whole osrs_members roster - the RSN need
+	      not be linked to anyone yet. Used for linking/updating a link.
+	      discord_id, if given, is only used for the Require_Unlinked check
+	      below (does the match belong to THIS discord_id already).
+	  True: searches only accounts already linked to discord_id (required in
+	      this mode) - never touches an unlinked account or someone else's.
+	      Used for commands that must only ever act on an existing link of the
+	      caller's own, e.g. set_main_rsn.
 	Returns:
-		int   the player_id, ready to use
-		None  no osrs_members row is a close enough match
-		False (only when Require_Unlinked=True) that player_id is already linked
+		int    the player_id
+		None   Own_Only=False only: no RSN this close matches anyone at all
+		False  Own_Only=False: a match was found, but Require_Unlinked=True and
+		       it's already linked to a different discord_id than supplied
+		       Own_Only=True: no linked account of discord_id's has a close
+		       enough RSN (including having none linked at all) - "not found"
+		       and "not yours" collapse into the same outcome here, since
+		       Own_Only never looks past the caller's own links to tell them
+		       apart in the first place.
 	"""
+	from Functions import sql_account_link   # local import: avoids a top-level circular import with sql_account_link.py
+	Not_Found = False if Own_Only else None
 	Wanted = _normalize(runescape_name)
 	if not Wanted:
-		return None
-	Rows = Members_Get(SQL_Cursor) or []
-	if not Rows:
-		return None
-	Scored = sorted(((_similarity(Wanted, _normalize(R["current_rsn"])), R) for R in Rows),	key=lambda Pair: Pair[0],reverse=True)
+		return Not_Found
+	if Own_Only:
+		if discord_id is None:
+			return False
+		Own_Links = sql_account_link.Linked_Accounts_Get(SQL_Cursor, discord_id=discord_id, player_id=None) or []
+		if not Own_Links:
+			return False
+		Own_Player_Ids = {L["player_id"] for L in Own_Links}
+		Candidate_Rows = [R for R in (Members_Get(SQL_Cursor) or []) if R["player_id"] in Own_Player_Ids]
+	else:
+		Candidate_Rows = Members_Get(SQL_Cursor) or []
+	if not Candidate_Rows:
+		return Not_Found
+	Scored = sorted(((_similarity(Wanted, _normalize(R["current_rsn"])), R) for R in Candidate_Rows), key=lambda Pair: Pair[0],	reverse=True)
 	Best_Score, Best_Row = Scored[0]
 	if Best_Score < FUZZY_MATCH_THRESHOLD:
-		return None
+		return Not_Found
 	Player_Id = Best_Row["player_id"]
-	if Require_Unlinked and sql_account_link.Linked_Accounts_Get(SQL_Cursor, discord_id=None, player_id=Player_Id):
-		return False
+	if Own_Only:
+		return Player_Id  # already confirmed above to be one of discord_id's own links
+	if Require_Unlinked:
+		Existing_Links = sql_account_link.Linked_Accounts_Get(SQL_Cursor, discord_id=None, player_id=Player_Id)
+		if Existing_Links:
+			Existing_Discord_Id = Existing_Links[0]["discord_id"]
+			if discord_id is None or int(Existing_Discord_Id) != int(discord_id):
+				return False
 	return Player_Id

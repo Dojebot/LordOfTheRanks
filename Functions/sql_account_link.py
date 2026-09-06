@@ -242,14 +242,28 @@ async def Linked_Accounts_Attempt_Match_Strong_Update(SQL_Connection, SQL_Cursor
 		for idx, item in enumerate(records, 1):
 			await Linked_Accounts_Update(SQL_Connection, SQL_Cursor, item.get("discord_id"), item.get("player_id"), item.get("is_main_account"), None)
 
+#Check whether a discord_id is moderator-locked. One row per discord_id in the
+#lock table, so this is always a single-row lookup regardless of how many OSRS
+#accounts that Discord user has linked.
+def Moderator_Locked_Get(SQL_Cursor, discord_id) -> bool:
+	Query = "SELECT moderator_locked FROM link_discord_osrs_members_moderator_locked WHERE discord_id = %s"
+	SQL_Cursor.execute(Query, (discord_id,))
+	Row = SQL_Cursor.fetchone()
+	return bool(Row[0]) if Row else False
+
+#Set the moderator lock for a discord_id. discord_id is the primary key on this
+#table, so this is a single upsert - it never touches per-link rows at all.
+def Moderator_Locked_Set(SQL_Cursor, discord_id, locked: bool):
+	Query = """INSERT INTO link_discord_osrs_members_moderator_locked (discord_id, moderator_locked)
+	           VALUES (%s, %s) ON DUPLICATE KEY UPDATE moderator_locked = VALUES(moderator_locked)"""
+	SQL_Cursor.execute(Query, (discord_id, locked))
+
 #Get linked accounts between discord_id and player_id (accepts single values or lists for either variable)
 def Linked_Accounts_Get(SQL_Cursor, discord_id: int | list = None, player_id: int | list = None, For_Update: bool = False) -> list:
 	is_discord_list = isinstance(discord_id, (list, tuple, set))
 	is_player_list = isinstance(player_id, (list, tuple, set))
-	# Normalize inputs into lists for uniform SQL generation
 	d_list = list(discord_id) if is_discord_list else ([discord_id] if discord_id is not None else None)
 	p_list = list(player_id) if is_player_list else ([player_id] if player_id is not None else None)
-	# Return early if any provided list is empty
 	if (d_list is not None and not d_list) or (p_list is not None and not p_list):
 		return None
 	where_clauses = []
@@ -262,12 +276,13 @@ def Linked_Accounts_Get(SQL_Cursor, discord_id: int | list = None, player_id: in
 		placeholders = ", ".join(["%s"] * len(p_list))
 		where_clauses.append(f"l1.player_id IN ({placeholders})")
 		params.extend(p_list)
-	# If neither discord_id nor player_id was provided, return every linked account (no WHERE filter)
 	where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 	Query = f"""
-		SELECT DISTINCT l2.link_id, l2.discord_id, l2.player_id, l2.is_main_account, l2.moderator_locked
+		SELECT DISTINCT l2.link_id, l2.discord_id, l2.player_id, l2.is_main_account,
+		       COALESCE(mlock.moderator_locked, FALSE) AS moderator_locked
 		FROM link_discord_osrs_members l1 
 		JOIN link_discord_osrs_members l2 ON l2.discord_id <=> l1.discord_id 
+		LEFT JOIN link_discord_osrs_members_moderator_locked mlock ON mlock.discord_id = l2.discord_id
 		{where_sql} 
 		ORDER BY l2.is_main_account DESC, l2.player_id ASC
 	"""
@@ -288,26 +303,6 @@ def Linked_Accounts_Get(SQL_Cursor, discord_id: int | list = None, player_id: in
 		]
 	return None
 
-'''
-def Linked_Accounts_Set(SQL_Connection, SQL_Cursor, discord_id, osrs_id):
-	Query = "INSERT INTO link_discord_osrs_members (discord_id, player_id) VALUES (%s, %s) ON DUPLICATE KEY UPDATE link_id = LAST_INSERT_ID(link_id)"
-	SQL_Cursor.execute(Query, (discord_id, osrs_id))
-	SQL_Connection.commit()
-	return SQL_Cursor.lastrowid
-'''
-
-#Display an error when an account is locked against normal users.
-async def _locked_account_error(interaction):
-	await interaction.response.send_message("This account is locked and can only be modified by a moderator. Please contact a moderator if you need to make changes.", ephemeral=True)
-
-#Display an error when an OSRS account is already linked elsewhere.
-async def _account_owned_by_another_error(interaction):
-	await interaction.response.send_message("That OSRS account is already linked to another Discord account. Please contact a moderator if you believe this is incorrect.", ephemeral=True)
-
-#Display a generic account/link-not-found error.
-async def _account_not_found_error(interaction):
-	await interaction.response.send_message("The requested linked account could not be found.", ephemeral=True)
-
 #Create or update a discord to osrs link
 async def Linked_Accounts_Update(SQL_Connection, SQL_Cursor, discord_id, osrs_id, is_main_account, caller_id=None):
 	"""
@@ -318,7 +313,6 @@ async def Linked_Accounts_Update(SQL_Connection, SQL_Cursor, discord_id, osrs_id
 		"owned_by_another"   osrs_id is already linked to a different discord_id
 		"locked"              the account is moderator-locked
 	"""
-	#Bot's own discord ID (allows for self-identification)
 	DISCORD_USER = bot_config.env_get("DISCORD_USER")
 	try:
 		discord_id = int(discord_id)
@@ -334,15 +328,10 @@ async def Linked_Accounts_Update(SQL_Connection, SQL_Cursor, discord_id, osrs_id
 	if caller_id != DISCORD_USER and modifying_another_user and not is_moderator:
 		return "permission_denied"
 	try:
-		# Clear out any stray implicit transaction left open by prior read-only queries on this
-		# connection (autocommit=False means a plain SELECT already starts one) before explicitly
-		# starting ours - otherwise start_transaction() raises "Transaction already in progress".
 		if SQL_Connection.in_transaction:
 			SQL_Connection.commit()
 		SQL_Connection.start_transaction()
 		existing_links = Linked_Accounts_Get(SQL_Cursor, discord_id, player_id=None, For_Update=True) or []
-		# Linked_Accounts_Get returns every account under that discord_id (self-joined), so pick
-		# out the specific row - if any - matching the osrs_id being linked.
 		existing_player_link_rows = Linked_Accounts_Get(SQL_Cursor, discord_id=None, player_id=osrs_id, For_Update=True) or []
 		existing_player_link = next((row for row in existing_player_link_rows if row["player_id"] == osrs_id), None)
 		if existing_player_link:
@@ -350,36 +339,26 @@ async def Linked_Accounts_Update(SQL_Connection, SQL_Cursor, discord_id, osrs_id
 			if existing_player_discord_id != discord_id:
 				SQL_Connection.rollback()
 				return "owned_by_another"
-		account_locked = any(row["moderator_locked"] for row in existing_links)
+		# Single-row lookup against the lock table, instead of scanning every row
+		# in existing_links for a moderator_locked flag that used to be repeated
+		# on each of them.                                                       # CHANGED
+		account_locked = Moderator_Locked_Get(SQL_Cursor, discord_id)            # CHANGED
 		if account_locked and not is_moderator and caller_id != DISCORD_USER:
 			SQL_Connection.rollback()
 			return "locked"
-		# -----------------------------------------------------
-		# EXISTING ACCOUNT
-		# -----------------------------------------------------
 		if existing_player_link:
 			link_id = existing_player_link["link_id"]
-			# If this is the only account, it MUST be main.
 			if len(existing_links) == 1:
 				is_main_account = True
-			# If this account is being made the main account,
-			# remove main status from every other account first.
 			if is_main_account:
 				Update_Query = "UPDATE link_discord_osrs_members SET is_main_account = FALSE WHERE discord_id = %s"
 				SQL_Cursor.execute(Update_Query, (discord_id,))
-			# Update the requested account.
 			Update_Query = "UPDATE link_discord_osrs_members SET is_main_account = %s WHERE link_id = %s AND discord_id = %s"
 			SQL_Cursor.execute(Update_Query, (is_main_account, link_id, discord_id))
 			SQL_Connection.commit()
 			return link_id
-		# -----------------------------------------------------
-		# NEW ACCOUNT
-		# -----------------------------------------------------
-		# First account MUST be main.
 		if not existing_links:
 			is_main_account = True
-		# New account is being made main, so remove main
-		# status from the existing account(s).
 		elif is_main_account:
 			Update_Query = "UPDATE link_discord_osrs_members SET is_main_account = FALSE WHERE discord_id = %s"
 			SQL_Cursor.execute(Update_Query, (discord_id,))
@@ -392,15 +371,18 @@ async def Linked_Accounts_Update(SQL_Connection, SQL_Cursor, discord_id, osrs_id
 		SQL_Connection.rollback()
 		raise
 
-# Delete an OSRS-discord account link
-async def Linked_Accounts_Delete(SQL_Connection, SQL_Cursor, discord_id, osrs_id, caller_id):
+# Flip which of a Discord user's already-linked OSRS accounts is flagged main.
+# Never creates or deletes a link - it only ever toggles is_main_account on one
+# that discord_id already owns.
+async def Linked_Accounts_Set_Main(SQL_Connection, SQL_Cursor, discord_id, osrs_id, caller_id):
 	"""
 	Returns:
-		int    the deleted link_id on success
+		int    the link_id now flagged main, on success
 		None   discord_id/osrs_id were not valid positive integers
 		"permission_denied"  caller may not modify this discord_id's links
-		"not_found"           no such link exists
-		"final_account"       this is the member's only linked account, and caller is not a moderator
+		"not_found"           osrs_id is not one of discord_id's linked accounts
+		"already_main"        osrs_id is already discord_id's main account
+		"locked"              the account is moderator-locked, and caller is not a moderator
 	"""
 	try:
 		discord_id = int(discord_id)
@@ -414,10 +396,63 @@ async def Linked_Accounts_Delete(SQL_Connection, SQL_Cursor, discord_id, osrs_id
 	if modifying_another_user and not is_moderator:
 		return "permission_denied"
 	try:
-		# Same stray-transaction guard Linked_Accounts_Update uses, for the same reason.
 		if SQL_Connection.in_transaction:
 			SQL_Connection.commit()
 		SQL_Connection.start_transaction()
+		if not is_moderator and Moderator_Locked_Get(SQL_Cursor, discord_id):
+			SQL_Connection.rollback()
+			return "locked"
+		existing_links = Linked_Accounts_Get(SQL_Cursor, discord_id=discord_id, player_id=None, For_Update=True) or []
+		target_link = next((row for row in existing_links if row["player_id"] == osrs_id), None)
+		if not target_link:
+			SQL_Connection.rollback()
+			return "not_found"
+		if target_link["is_main_account"]:
+			SQL_Connection.rollback()
+			return "already_main"
+		Update_Query = "UPDATE link_discord_osrs_members SET is_main_account = FALSE WHERE discord_id = %s"
+		SQL_Cursor.execute(Update_Query, (discord_id,))
+		Update_Query = "UPDATE link_discord_osrs_members SET is_main_account = TRUE WHERE link_id = %s AND discord_id = %s"
+		SQL_Cursor.execute(Update_Query, (target_link["link_id"], discord_id))
+		SQL_Connection.commit()
+		return target_link["link_id"]
+	except Exception:
+		SQL_Connection.rollback()
+		raise
+
+# Delete an OSRS-discord account link
+async def Linked_Accounts_Delete(SQL_Connection, SQL_Cursor, discord_id, osrs_id, caller_id):
+	"""
+	Returns:
+		int    the deleted link_id on success
+		None   discord_id/osrs_id were not valid positive integers
+		"permission_denied"  caller may not modify this discord_id's links
+		"not_found"           no such link exists
+		"final_account"       this is the member's only linked account, and caller is not a moderator
+		"locked"              the account is moderator-locked, and caller is not a moderator
+	"""
+	try:
+		discord_id = int(discord_id)
+		osrs_id = int(osrs_id)
+	except (TypeError, ValueError):
+		return None
+	if discord_id <= 0 or osrs_id <= 0:
+		return None
+	is_moderator = sql_account_discord.Discord_Moderator_Command_Permitted(SQL_Cursor, caller_id, 1)
+	modifying_another_user = caller_id != discord_id
+	if modifying_another_user and not is_moderator:
+		return "permission_denied"
+	try:
+		if SQL_Connection.in_transaction:
+			SQL_Connection.commit()
+		SQL_Connection.start_transaction()
+		# Single-row lock check, done up front rather than derived from the linked
+		# rows fetched below - this also means a locked account with zero links
+		# left can't be re-touched by its owner, which the old per-row check on
+		# existing_links could never express since it had nothing to read.       # CHANGED
+		if not is_moderator and Moderator_Locked_Get(SQL_Cursor, discord_id):    # CHANGED
+			SQL_Connection.rollback()                                            # CHANGED
+			return "locked"                                                      # CHANGED
 		existing_links = Linked_Accounts_Get(SQL_Cursor, discord_id=discord_id, player_id=None, For_Update=True)
 		if not existing_links:
 			SQL_Connection.rollback()
@@ -426,8 +461,6 @@ async def Linked_Accounts_Delete(SQL_Connection, SQL_Cursor, discord_id, osrs_id
 		if not target_link:
 			SQL_Connection.rollback()
 			return "not_found"
-		# A moderator may remove a member's last linked account; a member acting
-		# on their own links may not leave themself with none.
 		if len(existing_links) <= 1 and not is_moderator:
 			SQL_Connection.rollback()
 			return "final_account"
@@ -450,7 +483,9 @@ async def Linked_Accounts_Delete(SQL_Connection, SQL_Cursor, discord_id, osrs_id
 		SQL_Connection.rollback()
 		raise
 
-# Toggle moderator_locked for every linked account belonging to a Discord user.
+# Toggle moderator_locked for a Discord user. Single upsert against the lock
+# table now, rather than an UPDATE that used to touch every one of their linked
+# rows at once.                                                                 # CHANGED
 async def Linked_Accounts_Lock_Toggle(SQL_Connection, SQL_Cursor, discord_id, caller_id):
 	"""
 	Returns:
@@ -471,14 +506,16 @@ async def Linked_Accounts_Lock_Toggle(SQL_Connection, SQL_Cursor, discord_id, ca
 		if SQL_Connection.in_transaction:
 			SQL_Connection.commit()
 		SQL_Connection.start_transaction()
+		# Still gated on having at least one linked account, matching the original
+		# behaviour - toggling a lock for someone with nothing linked yet has no
+		# link to act on.                                                        # CHANGED
 		existing_links = Linked_Accounts_Get(SQL_Cursor, discord_id=discord_id, player_id=None, For_Update=True)
 		if not existing_links:
 			SQL_Connection.rollback()
 			return "not_found"
-		currently_locked = all(row["moderator_locked"] for row in existing_links)
+		currently_locked = Moderator_Locked_Get(SQL_Cursor, discord_id)          # CHANGED
 		new_lock_state = not currently_locked
-		Update_Query = "UPDATE link_discord_osrs_members SET moderator_locked = %s WHERE discord_id = %s"
-		SQL_Cursor.execute(Update_Query, (new_lock_state, discord_id))
+		Moderator_Locked_Set(SQL_Cursor, discord_id, new_lock_state)             # CHANGED
 		SQL_Connection.commit()
 		return "locked" if new_lock_state else "unlocked"
 	except Exception:

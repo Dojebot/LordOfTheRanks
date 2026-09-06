@@ -36,7 +36,11 @@
 	   "link_id": "INT PRIMARY KEY AUTO_INCREMENT",
        "discord_id": "BIGINT",
        "player_id": "INT NOT NULL UNIQUE KEY",
-       "is_main_account": "BOOLEAN NOT NULL DEFAULT FALSE",
+       "is_main_account": "BOOLEAN NOT NULL DEFAULT FALSE"
+    },
+
+       "link_discord_osrs_members_moderator_locked": {
+       "discord_id": "BIGINT PRIMARY KEY",
        "moderator_locked": "BOOLEAN DEFAULT FALSE"
     },
 
