@@ -21,7 +21,6 @@ def Linked_Accounts_Attempt_Matches(SQL_Cursor, discord_members: list[dict], osr
 	known_links = Linked_Accounts_Get(SQL_Cursor) or []
 	osrs_roles = sql_account_osrs.Roles_Get(SQL_Cursor) or []
 	discord_promotion_ranks = sql_account_discord.Promotion_Ranks_Get(SQL_Cursor) or []
- 
 	# 1. Build lookup tables for existing links
 	linked_discord_to_player = {
 		link['discord_id']: link['player_id']
@@ -31,17 +30,14 @@ def Linked_Accounts_Attempt_Matches(SQL_Cursor, discord_members: list[dict], osr
 	for link in known_links:
 		if link['discord_id'] is not None:
 			linked_player_to_discords.setdefault(link['player_id'], set()).add(link['discord_id'])
- 
 	# Fast maps for members
 	osrs_by_id = {o['player_id']: o for o in osrs_members}
 	discord_by_id = {d['discord_id']: d for d in discord_members}
- 
 	# 2. rank_id -> osrs_roles.osrs_role_id (confirms it's a genuine, known role), then compared
 	#    directly against discord_promotion_ranks.promotion_rank_id to see if that rank is one
 	#    discord_promotion_ranks actually recognises as a potential promotion rank.
 	osrs_role_by_id = {r['osrs_role_id']: r for r in osrs_roles}
 	valid_promotion_rank_ids = {r['promotion_rank_id'] for r in discord_promotion_ranks}
-
 	def _has_promotable_rank(player_id: int) -> bool:
 		osrs = osrs_by_id.get(player_id)
 		if not osrs:
@@ -66,21 +62,17 @@ def Linked_Accounts_Attempt_Matches(SQL_Cursor, discord_members: list[dict], osr
 				_normalize(disc['name_display']),
 				_normalize(disc['name_nick'])
 			} - {""}
- 
 			if rsn_norm in disc_names:
 				candidate_matches.setdefault(p_id, set()).add(d_id)
- 
 	# 4. Initialize results buckets
 	strong_matches = []      # 1. Resolved match(es), main account determined
 	conflicts = []           # 2. Ambiguous/indeterminate match
 	unmatched_discord = []   # 3. Discord users with no OSRS match/link
 	unmatched_osrs = []      # 4. OSRS users with no Discord match/link
 	repaired_needed = []     # 5. Known links where name comparison no longer matches
- 
 	# Helper tracking
 	processed_players = set()
 	processed_discords = set()
- 
 	# --- CATEGORY 5: Needs Repair ---
 	# Keeps whatever is_main_account value the existing link already has - repair is about the
 	# name no longer matching, not about recomputing main-account status.
@@ -98,7 +90,6 @@ def Linked_Accounts_Attempt_Matches(SQL_Cursor, discord_members: list[dict], osr
 				})
 				processed_players.add(p_id)
 				processed_discords.add(d_id)
- 
 	# --- Split candidate_matches into "clean" single-discord players vs ambiguous multi-discord players ---
 	# CATEGORY 2a: a single OSRS RSN matched more than one Discord entry - can't tell which Discord
 	# account is theirs, so this can't be resolved into a main-account decision at all.
@@ -117,12 +108,10 @@ def Linked_Accounts_Attempt_Matches(SQL_Cursor, discord_members: list[dict], osr
 			processed_players.add(p_id)
 		else:
 			single_discord_players[p_id] = next(iter(matched_discords))
- 
 	# --- Group the remaining clean matches by Discord entry ---
 	discord_to_players: dict[int, list[int]] = {}
 	for p_id, d_id in single_discord_players.items():
 		discord_to_players.setdefault(d_id, []).append(p_id)
- 
 	# --- CATEGORY 1 & 2b: Strong matches vs conflicts, resolved via promotion rank ---
 	for d_id, players in discord_to_players.items():
 		if d_id in processed_discords:
@@ -130,7 +119,6 @@ def Linked_Accounts_Attempt_Matches(SQL_Cursor, discord_members: list[dict], osr
 		players = [p for p in players if p not in processed_players]
 		if not players:
 			continue
- 
 		if len(players) == 1:
 			# Single OSRS account for this Discord entry - main-account status still follows
 			# whether the account holds a rank recognised in valid_promotion_rank_ids, rather
@@ -144,7 +132,6 @@ def Linked_Accounts_Attempt_Matches(SQL_Cursor, discord_members: list[dict], osr
 			processed_players.add(p_id)
 			processed_discords.add(d_id)
 			continue
- 
 		# Multiple OSRS accounts matched to a single Discord entry - use the rank/role chain to
 		# find whichever account(s) hold a rank that discord_promotion_ranks recognises.
 		promotable = [p for p in players if _has_promotable_rank(p)]
@@ -175,19 +162,16 @@ def Linked_Accounts_Attempt_Matches(SQL_Cursor, discord_members: list[dict], osr
 				})
 				processed_players.add(p_id)
 			processed_discords.add(d_id)
- 
 	# --- CATEGORY 3: Unmatched Discord ---
 	for disc in discord_members:
 		d_id = disc['discord_id']
 		if d_id not in processed_discords and d_id not in linked_discord_to_player:
 			unmatched_discord.append({"discord_id": d_id, "player_id": None, "is_main_account": False})
- 
 	# --- CATEGORY 4: Unmatched OSRS ---
 	for osrs in osrs_members:
 		p_id = osrs['player_id']
 		if p_id not in processed_players and p_id not in linked_player_to_discords:
 			unmatched_osrs.append({"discord_id": None, "player_id": p_id, "is_main_account": _has_promotable_rank(p_id)})
- 
 	return {
 		"strong_matches": strong_matches,
 		"conflicts": conflicts,
@@ -258,7 +242,6 @@ async def Linked_Accounts_Attempt_Match_Strong_Update(SQL_Connection, SQL_Cursor
 		for idx, item in enumerate(records, 1):
 			await Linked_Accounts_Update(SQL_Connection, SQL_Cursor, item.get("discord_id"), item.get("player_id"), item.get("is_main_account"), None)
 
-
 #Get linked accounts between discord_id and player_id (accepts single values or lists for either variable)
 def Linked_Accounts_Get(SQL_Cursor, discord_id: int | list = None, player_id: int | list = None, For_Update: bool = False) -> list:
 	is_discord_list = isinstance(discord_id, (list, tuple, set))
@@ -325,7 +308,16 @@ async def _account_owned_by_another_error(interaction):
 async def _account_not_found_error(interaction):
 	await interaction.response.send_message("The requested linked account could not be found.", ephemeral=True)
 
-async def Linked_Accounts_Update(SQL_Connection, SQL_Cursor, discord_id, osrs_id, is_main_account, interaction = None):
+#Create or update a discord to osrs link
+async def Linked_Accounts_Update(SQL_Connection, SQL_Cursor, discord_id, osrs_id, is_main_account, caller_id=None):
+	"""
+	Returns:
+		int    the link_id on success (existing link updated, or new one created)
+		None   discord_id/osrs_id were not valid positive integers
+		"permission_denied"  caller_id may not modify this discord_id's links
+		"owned_by_another"   osrs_id is already linked to a different discord_id
+		"locked"              the account is moderator-locked
+	"""
 	#Bot's own discord ID (allows for self-identification)
 	DISCORD_USER = bot_config.env_get("DISCORD_USER")
 	try:
@@ -336,12 +328,11 @@ async def Linked_Accounts_Update(SQL_Connection, SQL_Cursor, discord_id, osrs_id
 		return None
 	if discord_id <= 0 or osrs_id <= 0:
 		return None
-	caller_id = interaction.user.id if interaction is not None else DISCORD_USER
+	caller_id = caller_id if caller_id is not None else DISCORD_USER
 	is_moderator = sql_account_discord.Discord_Moderator_Command_Permitted(SQL_Cursor, discord_id, 1)
 	modifying_another_user = caller_id != discord_id
 	if caller_id != DISCORD_USER and modifying_another_user and not is_moderator:
-		await bot_config.Command_Permissions_Issue(interaction)
-		return None
+		return "permission_denied"
 	try:
 		# Clear out any stray implicit transaction left open by prior read-only queries on this
 		# connection (autocommit=False means a plain SELECT already starts one) before explicitly
@@ -349,22 +340,20 @@ async def Linked_Accounts_Update(SQL_Connection, SQL_Cursor, discord_id, osrs_id
 		if SQL_Connection.in_transaction:
 			SQL_Connection.commit()
 		SQL_Connection.start_transaction()
-		existing_links = Linked_Accounts_Get(SQL_Cursor, discord_id, player_id = None, For_Update = True) or []
+		existing_links = Linked_Accounts_Get(SQL_Cursor, discord_id, player_id=None, For_Update=True) or []
 		# Linked_Accounts_Get returns every account under that discord_id (self-joined), so pick
 		# out the specific row - if any - matching the osrs_id being linked.
-		existing_player_link_rows = Linked_Accounts_Get(SQL_Cursor, discord_id = None, player_id = osrs_id, For_Update = True) or []
+		existing_player_link_rows = Linked_Accounts_Get(SQL_Cursor, discord_id=None, player_id=osrs_id, For_Update=True) or []
 		existing_player_link = next((row for row in existing_player_link_rows if row["player_id"] == osrs_id), None)
 		if existing_player_link:
 			existing_player_discord_id = existing_player_link["discord_id"]
 			if existing_player_discord_id != discord_id:
 				SQL_Connection.rollback()
-				await _account_owned_by_another_error(interaction)
-				return None
+				return "owned_by_another"
 		account_locked = any(row["moderator_locked"] for row in existing_links)
 		if account_locked and not is_moderator and caller_id != DISCORD_USER:
 			SQL_Connection.rollback()
-			await _locked_account_error(interaction)
-			return None
+			return "locked"
 		# -----------------------------------------------------
 		# EXISTING ACCOUNT
 		# -----------------------------------------------------
@@ -404,60 +393,53 @@ async def Linked_Accounts_Update(SQL_Connection, SQL_Cursor, discord_id, osrs_id
 		raise
 
 # Delete an OSRS-discord account link
-async def Linked_Accounts_Delete(interaction, SQL_Connection, SQL_Cursor, discord_id, osrs_id):
+async def Linked_Accounts_Delete(SQL_Connection, SQL_Cursor, discord_id, osrs_id, caller_id):
 	"""
-	Delete a Discord <-> OSRS account link.
-
-	Rules:
-		- Moderator only.
-		- Cannot delete the final account belonging to a Discord user.
-		- Locked accounts require moderator permission.
-		- Returns deleted link_id on success.
-		- Returns None on failure.
+	Returns:
+		int    the deleted link_id on success
+		None   discord_id/osrs_id were not valid positive integers
+		"permission_denied"  caller may not modify this discord_id's links
+		"not_found"           no such link exists
+		"final_account"       this is the member's only linked account, and caller is not a moderator
 	"""
-	# ---------------------------------------------------------
-	# Moderator check
-	# ---------------------------------------------------------
-	if not sql_account_discord.Discord_Moderator_Command_Permitted(SQL_Cursor, discord_id, 1):
-		await bot_config.Command_Permissions_Issue(interaction)
-		return None
 	try:
 		discord_id = int(discord_id)
 		osrs_id = int(osrs_id)
 	except (TypeError, ValueError):
 		return None
+	if discord_id <= 0 or osrs_id <= 0:
+		return None
+	is_moderator = sql_account_discord.Discord_Moderator_Command_Permitted(SQL_Cursor, caller_id, 1)
+	modifying_another_user = caller_id != discord_id
+	if modifying_another_user and not is_moderator:
+		return "permission_denied"
 	try:
+		# Same stray-transaction guard Linked_Accounts_Update uses, for the same reason.
+		if SQL_Connection.in_transaction:
+			SQL_Connection.commit()
 		SQL_Connection.start_transaction()
-		# Lock the Discord user's rows.
-		existing_links = Linked_Accounts_Get(SQL_Cursor, discord_id = discord_id, player_id = None, For_Update=True);
+		existing_links = Linked_Accounts_Get(SQL_Cursor, discord_id=discord_id, player_id=None, For_Update=True)
 		if not existing_links:
 			SQL_Connection.rollback()
-			await _account_not_found_error(interaction)
-			return None
-		# Find the requested link.
+			return "not_found"
 		target_link = next((row for row in existing_links if row["player_id"] == osrs_id), None)
 		if not target_link:
 			SQL_Connection.rollback()
-			await _account_not_found_error(interaction)
-			return None
-		# Cannot delete the final account.
-		if len(existing_links) <= 1:
+			return "not_found"
+		# A moderator may remove a member's last linked account; a member acting
+		# on their own links may not leave themself with none.
+		if len(existing_links) <= 1 and not is_moderator:
 			SQL_Connection.rollback()
-			await interaction.response.send_message("You cannot delete the final linked OSRS account.", ephemeral=True)
-			return None
+			return "final_account"
 		link_id = target_link["link_id"]
 		was_main = bool(target_link["is_main_account"])
-		# Delete the link.
 		Delete_Query = "DELETE FROM link_discord_osrs_members WHERE link_id = %s AND discord_id = %s AND player_id = %s"
-		SQL_Cursor.execute(Delete_Query, (link_id,discord_id,osrs_id))
+		SQL_Cursor.execute(Delete_Query, (link_id, discord_id, osrs_id))
 		if SQL_Cursor.rowcount != 1:
 			SQL_Connection.rollback()
 			return None
-		# -----------------------------------------------------
-		# If the deleted account was main, promote another one.
-		# -----------------------------------------------------
 		if was_main:
-			remaining_links = Linked_Accounts_Get(SQL_Cursor, discord_id = discord_id, player_id = None, For_Update=True);
+			remaining_links = Linked_Accounts_Get(SQL_Cursor, discord_id=discord_id, player_id=None, For_Update=True)
 			if remaining_links:
 				new_main_link_id = remaining_links[0]["link_id"]
 				Update_Query = "UPDATE link_discord_osrs_members SET is_main_account = TRUE WHERE link_id = %s"
@@ -468,44 +450,37 @@ async def Linked_Accounts_Delete(interaction, SQL_Connection, SQL_Cursor, discor
 		SQL_Connection.rollback()
 		raise
 
-#Toggle locking an osrs-discord account link by discord id
-async def Linked_Accounts_Lock_Toggle(interaction, SQL_Connection, SQL_Cursor, discord_id):
+# Toggle moderator_locked for every linked account belonging to a Discord user.
+async def Linked_Accounts_Lock_Toggle(SQL_Connection, SQL_Cursor, discord_id, caller_id):
 	"""
-	Toggle moderator_locked for all linked accounts belonging
-	to a Discord user.
-
-	Moderator only.
-
 	Returns:
-		True on success
-		None on failure
+		"locked" / "unlocked"  the new state, on success
+		None                    discord_id was not a valid positive integer
+		"permission_denied"    caller is not a moderator
+		"not_found"             the member has no linked accounts
 	"""
-
-	# ---------------------------------------------------------
-	# Moderator check
-	# ---------------------------------------------------------
-	if not sql_account_discord.Discord_Moderator_Command_Permitted(SQL_Cursor, discord_id, 1):
-		await bot_config.Command_Permissions_Issue(interaction)
-		return None
 	try:
 		discord_id = int(discord_id)
 	except (TypeError, ValueError):
 		return None
+	if discord_id <= 0:
+		return None
+	if not sql_account_discord.Discord_Moderator_Command_Permitted(SQL_Cursor, caller_id, 1):
+		return "permission_denied"
 	try:
+		if SQL_Connection.in_transaction:
+			SQL_Connection.commit()
 		SQL_Connection.start_transaction()
-		existing_links = Linked_Accounts_Get(SQL_Cursor, discord_id = discord_id, player_id = None, For_Update=True);
+		existing_links = Linked_Accounts_Get(SQL_Cursor, discord_id=discord_id, player_id=None, For_Update=True)
 		if not existing_links:
 			SQL_Connection.rollback()
-			await _account_not_found_error(interaction)
-			return None
-		# If ANY entry is unlocked, lock everything.
-		# If everything is locked, unlock everything.
-		currently_locked = all(row["moderator_locked"] for row in existing_links )
+			return "not_found"
+		currently_locked = all(row["moderator_locked"] for row in existing_links)
 		new_lock_state = not currently_locked
 		Update_Query = "UPDATE link_discord_osrs_members SET moderator_locked = %s WHERE discord_id = %s"
 		SQL_Cursor.execute(Update_Query, (new_lock_state, discord_id))
 		SQL_Connection.commit()
-		return True
+		return "locked" if new_lock_state else "unlocked"
 	except Exception:
 		SQL_Connection.rollback()
 		raise

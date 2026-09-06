@@ -24,6 +24,8 @@ DISCORD_TOKEN = bot_config.env_get("DISCORD_API_TOKEN")
 DISCORD_USER = bot_config.env_get("DISCORD_USER")
 #Homeland's server UUID; ensures nobody else can use the bot to avoid conflicts if other servers get access to it for whatever reason (as we're not making a universal product)
 DISCORD_GUILD = bot_config.env_get("DISCORD_GUILD")
+#Notification channels for various dual-posting purposes
+DISCORD_NOTIFICATION_CHANNEL_ACCOUNT_LINK = bot_config.env_get("DISCORD_NOTIFICATION_CHANNEL_ACCOUNT_LINK")
 #SQL Database connection environment variables
 SQL_HOST = bot_config.env_get("MYSQL_HOST")
 SQL_USER = bot_config.env_get("MYSQL_USER")
@@ -49,6 +51,7 @@ Command_Namespace = {
 	"app_commands": discord.app_commands,
 	"DISCORD_GUILD": DISCORD_GUILD,
 	"DISCORD_USER": DISCORD_USER,
+	"DISCORD_NOTIFICATION_CHANNEL_ACCOUNT_LINK": DISCORD_NOTIFICATION_CHANNEL_ACCOUNT_LINK,
 	"SQL_Connection": SQL_Connection,
 	"SQL_Cursor": SQL_Cursor,
 	"WOM_USER": WOM_USER,
@@ -117,7 +120,6 @@ async def on_ready():
 	await sql_account_link.Linked_Accounts_Attempt_Match_Strong_Update(SQL_Connection, SQL_Cursor, Link_Data, discord_members, osrs_members)
 	#known_links = sql_account_link.Linked_Accounts_Get(SQL_Cursor, discord_ids, player_ids)
 	
-
 	#Rank votes: re-register open votes' buttons, check the rank ladder against
 	#the server's roles, and start watching for votes whose time is up
 	#await poll_setup.On_Ready(Discord_Client, DISCORD_GUILD)

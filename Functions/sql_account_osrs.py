@@ -1,4 +1,7 @@
 from Functions import sql_config
+from Functions import sql_account_link
+import difflib
+FUZZY_MATCH_THRESHOLD = 0.6
 
 # Flatten the WOM group payload into a list of membership entries, optionally filtered to one player
 def _normalize_wom(member_data, member_id=None):
@@ -8,6 +11,13 @@ def _normalize_wom(member_data, member_id=None):
 	if member_id is not None:
 		memberships = [m for m in memberships if str(m.get("player_id")) == str(member_id)]
 	return memberships
+
+def _normalize(name: str | None) -> str:
+	"""Helper to convert names to lowercase with spaces for comparison."""
+	if not name:
+		return ""
+	# Standardize spaces, underscores, and dashes commonly used across Discord/OSRS
+	return name.lower().replace("_", " ").replace("-", " ").strip()
 
 #Resolve null strings
 def _text(value):
@@ -34,7 +44,6 @@ def _load_rank_map(SQL_Connection, SQL_Cursor, roles: list = None) -> dict:
 	missing = [role for role in roles if role not in rank_map]
 	if not missing:
 		return rank_map
- 
 	# Pull every discord role name -> promotion_rank_id pair for case-insensitive matching
 	SQL_Query = "SELECT dr.discord_role_name, dpr.promotion_rank_id FROM discord_roles AS dr JOIN discord_promotion_ranks AS dpr ON dpr.discord_role_id = dr.discord_role_id";
 	discord_rows = sql_config.Query_Dicts_Get(SQL_Cursor, SQL_Query)
@@ -44,7 +53,6 @@ def _load_rank_map(SQL_Connection, SQL_Cursor, roles: list = None) -> dict:
 		for row in discord_rows
 		if row["promotion_rank_id"] is not None
 	}
- 
 	linked = []
 	unlinked = []
 	for role in missing:
@@ -54,7 +62,6 @@ def _load_rank_map(SQL_Connection, SQL_Cursor, roles: list = None) -> dict:
 			linked.append((rank_id, role))
 		else:
 			unlinked.append(role)
- 
 	if linked:
 		SQL_Cursor.executemany("INSERT IGNORE INTO osrs_roles (osrs_role_id, osrs_role_name) VALUES (%s, %s)", linked)
 		#Populate the link table between osrs roles and discord roles
@@ -66,7 +73,6 @@ def _load_rank_map(SQL_Connection, SQL_Cursor, roles: list = None) -> dict:
 			   WHERE dpr.promotion_rank_id IS NOT NULL"""
 		)
 		SQL_Connection.commit()
- 
 	if unlinked:
 		# osrs_role_id is being assigned explicitly here, so compute the next free
 		# index ourselves rather than relying on auto-increment (avoids colliding
@@ -79,7 +85,6 @@ def _load_rank_map(SQL_Connection, SQL_Cursor, roles: list = None) -> dict:
 			next_id += 1
 		SQL_Cursor.executemany("INSERT IGNORE INTO osrs_roles (osrs_role_id, osrs_role_name) VALUES (%s, %s)", unlinked_rows)
 		SQL_Connection.commit()
- 
 	#Get OSRS roles list
 	rank_map = {
 		row["osrs_role_name"]: row["osrs_role_id"]
@@ -146,3 +151,36 @@ def Members_Display(members: list[dict]):
 def Roles_Get(SQL_Cursor) -> list[dict]:
 	Query = "SELECT osrs_role_id, osrs_role_name FROM osrs_roles"
 	return sql_config.Query_Dicts_Get(SQL_Cursor, Query)
+
+# How close a typed RSN has to be to a real one before it is treated as a match
+# at all. Below this, a wildly different name should fail rather than silently
+# link to whichever row happens to score highest.
+def _similarity(a: str, b: str) -> float:
+	"""0..1 similarity between two already-normalized names."""
+	return difflib.SequenceMatcher(None, a, b).ratio()
+
+# Resolve a typed RSN to the player_id it most likely names, for /linked_accounts commands.
+# Exact (normalized) matches always win outright. Failing that, the closest match by
+# similarity is used provided it clears FUZZY_MATCH_THRESHOLD - a typo like "zezzima"
+# still resolves to "zezima" rather than forcing an exact re-type.
+def Runescape_Name_To_Player_ID(SQL_Cursor, runescape_name: str, Require_Unlinked: bool = True):
+	"""
+	Returns:
+		int   the player_id, ready to use
+		None  no osrs_members row is a close enough match
+		False (only when Require_Unlinked=True) that player_id is already linked
+	"""
+	Wanted = _normalize(runescape_name)
+	if not Wanted:
+		return None
+	Rows = Members_Get(SQL_Cursor) or []
+	if not Rows:
+		return None
+	Scored = sorted(((_similarity(Wanted, _normalize(R["current_rsn"])), R) for R in Rows),	key=lambda Pair: Pair[0],reverse=True)
+	Best_Score, Best_Row = Scored[0]
+	if Best_Score < FUZZY_MATCH_THRESHOLD:
+		return None
+	Player_Id = Best_Row["player_id"]
+	if Require_Unlinked and sql_account_link.Linked_Accounts_Get(SQL_Cursor, discord_id=None, player_id=Player_Id):
+		return False
+	return Player_Id
